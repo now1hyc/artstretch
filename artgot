@@ -1,0 +1,164 @@
+#!/usr/bin/python3
+
+# Updated/fixed version from Gene Kogan's "machine learning for artists" collection - ml4a.github.io
+# Huge shoutout to Gene Kogan for fixing this script - a second time - hahaha.
+# Update the scripts with an easy way to access the artparams.Lol
+import time
+import os
+import re
+import random
+import argparse
+import urllib
+import urllib.request
+import urllib.parse
+import itertools
+import multiprocessing
+from multiprocessing.dummy import Pool
+import json
+import logging
+
+
+genre_list = ['portrait', 'landscape', 'genre-painting', 'abstract', 'religious-painting', 
+              'cityscape', 'sketch-and-study', 'figurative', 'illustration', 'still-life', 
+              'design', 'nude-painting-nu', 'mythological-painting', 'marina', 'animal-painting', 
+              'flower-painting', 'self-portrait', 'installation', 'photo', 'allegorical-painting', 
+              'history-painting', 'interior', 'literary-painting', 'poster', 'caricature', 
+              'battle-painting', 'wildlife-painting', 'cloudscape', 'miniature', 'veduta', 
+              'yakusha-e', 'calligraphy', 'graffiti', 'tessellation', 'capriccio', 'advertisement', 
+              'bird-and-flower-painting', 'performance', 'bijinga', 'pastorale', 'trompe-loeil', 
+              'vanitas', 'shan-shui', 'tapestry', 'mosaic', 'quadratura', 'panorama', 'architecture']
+
+style_list = ['impressionism', 'realism', 'romanticism', 'expressionism', 
+            'post-impressionism', 'surrealism', 'art-nouveau', 'baroque', 
+            'symbolism', 'abstract-expressionism', 'na-ve-art-primitivism', 
+            'neoclassicism', 'cubism', 'rococo', 'northern-renaissance', 
+            'pop-art', 'minimalism', 'abstract-art', 'art-informel', 'ukiyo-e', 
+            'conceptual-art', 'color-field-painting', 'high-renaissance',
+            'mannerism-late-renaissance', 'neo-expressionism', 'early-renaissance', 
+            'magic-realism', 'academicism', 'op-art', 'lyrical-abstraction', 
+            'contemporary-realism', 'art-deco', 'fauvism', 'concretism', 
+            'ink-and-wash-painting', 'post-minimalism', 'social-realism', 
+            'hard-edge-painting', 'neo-romanticism', 'tachisme', 'pointillism', 
+            'socialist-realism', 'neo-pop-art']
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--genre", help="which genre to scrape", choices=genre_list, default='landscape')
+parser.add_argument("--style", help="which style to scrape", choices=style_list, default=None)
+parser.add_argument("--num_pages", type=int, help="number of pages to scrape (leave blank to download all of them)", default=1)
+parser.add_argument("--output_dir", default='images',help="where to put output files")
+
+num_downloaded = 0
+num_images = 0
+image_urllist_file = 'image_urlist.txt'
+charset='utf8'
+headers = {'Accept-Charset': charset, 'Content-Type': 'application/json'}
+
+def get_painting_count(typep,searchword):
+    try:
+        time.sleep(3.0*random.random())  # random sleep to decrease concurrence of requests
+        url = "https://www.wikiart.org/en/paintings-by-%s/%s"%(typep,searchword)
+        dictdata={"json":2,"page":1}
+        params = json.dumps(dictdata)
+        bparams = bytes(params, charset)
+        req = urllib.request.Request(url=url,data=bparams, headers=headers, method='GET')
+        response = urllib.request.urlopen(req).read()
+        json_res = response.decode(charset)
+        json_text = json.loads(json_res)
+        pagecnt = json_text['PageSize']
+        return pagecnt
+    except Exception as e:
+        print('falied to scrape %s/%s count in %s'%(typep,searchword,url))
+        print(e)
+
+def save_urls(url_list):
+    with open(image_urllist_file,"w") as f:
+        for w_item in url_list:
+            f.write('%s\r\n'%w_item)
+
+def save_url(url):
+    with open(image_urllist_file,"a") as f:
+        f.write('%s\r\n'%url)
+
+
+def load_urls():
+    wikiart_pages = []
+    fo = open(image_urllist_file, "r") 
+    for line in fo.readlines():            
+        line = line.strip()
+        wikiart_pages.append(line)    
+    pages = [page for page in wikiart_pages if page ]
+    items = list(set(pages))  # get rid of duplicates
+    num_images = len(items)
+    return items
+
+def get_painting_list(count, typep, searchword):
+    try:
+        time.sleep(3.0*random.random())  # random sleep to decrease concurrence of requests
+        url = "https://www.wikiart.org/en/paintings-by-%s/%s"%(typep,searchword)
+        dictdata={"json":2,"page":count}
+        params = json.dumps(dictdata)
+        bparams = bytes(params, charset)
+        req = urllib.request.Request(url=url,data=bparams, headers=headers, method='GET')
+        response = urllib.request.urlopen(req).read()
+        json_res = response.decode(charset)
+        json_text = json.loads(json_res)      
+        url_list = []
+        painting_list = json_text['Paintings']
+        if len(painting_list) > 0:
+            for cols in painting_list:
+                image_url = cols['image']
+                print('image:%s'% image_url)
+                url_list.append(image_url)
+        count += len(url_list)
+        save_urls(url_list)
+    except Exception as e:
+        print('failed to scrape %s'%url, e)
+
+
+def downloader(link, genre, output_dir):
+    global num_downloaded, num_images
+    item, file = link
+    filepath = file.split('/')
+    #savepath = '%s/%s/%d_%s' % (output_dir, genre, item, filepath[-1])
+    savepath = '%s/%s/%s' % (output_dir, genre, filepath[-1])    
+    try:
+        time.sleep(0.2)  # try not to get a 403
+        urllib.request.urlretrieve(file, savepath)
+        num_downloaded += 1
+        if num_downloaded % 100 == 0:
+            print('downloaded number %d / %d...' % (num_downloaded, num_images))
+    except Exception as e:
+        print("failed downloading " + str(file), e) 
+
+
+def main(typep, searchword, num_pages, output_dir):
+    global num_images
+    print('gathering links to images... this may take a few minutes')
+    cpus = multiprocessing.cpu_count()
+    cpus = 3
+    # threadpool = Pool(-1)
+    # numbers = list(range(1, num_pages))
+    # wikiart_pages = threadpool.starmap(get_painting_list, zip(numbers, itertools.repeat(typep), itertools.repeat(searchword))) 
+    # threadpool.close()
+    # threadpool.join()              
+
+    items = load_urls()
+    num_images = len(items)
+
+    if not os.path.isdir('%s/%s'%(output_dir, searchword)):
+        os.mkdir('%s/%s'%(output_dir, searchword))
+    
+    print('attempting to download %d images'%num_images)
+    threadpool = Pool(cpus -1)
+    threadpool.starmap(downloader, zip(enumerate(items), itertools.repeat(searchword), itertools.repeat(output_dir)))
+    threadpool.close    
+    threadpool.close()
+
+
+if __name__ == '__main__':
+    args = parser.parse_args()
+    searchword, typep = (args.genre, 'genre') if args.genre is not None else (args.style, 'style')
+    # num_pages = args.num_pages
+    output_dir = args.output_dir
+    num_pages = get_painting_count(typep,searchword)
+    main(typep, searchword, num_pages, output_dir)
